@@ -1,0 +1,243 @@
+import Broadcast from '../models/Broadcast.js';
+import BroadcastCall from '../models/BroadcastCall.js';
+import OptOut from '../models/OptOut.js';
+
+import twilioVoiceService from './twilioVoiceService.js';
+import logger from '../utils/logger.js';
+import { emitBroadcastUpdate } from "../sockets/unifiedSocket.js";
+
+class BroadcastQueueService {
+  constructor() {
+    this.activeBroadcasts = new Map(); // broadcastId -> { interval }
+    this.POLL_INTERVAL = 5000; // 5 seconds
+  }
+
+  /**
+   * Start processing broadcast queue
+   */
+  startBroadcast(broadcastId) {
+    if (this.activeBroadcasts.has(broadcastId)) {
+      logger.warn(`Broadcast ${broadcastId} already active`);
+      return;
+    }
+
+    logger.info(`Starting queue processor for broadcast: ${broadcastId}`);
+
+    const interval = setInterval(async () => {
+      await this._processBroadcastQueue(broadcastId);
+    }, this.POLL_INTERVAL);
+
+    this.activeBroadcasts.set(broadcastId, {
+      interval
+    });
+  }
+
+  /**
+   * Stop processing broadcast
+   */
+  stopBroadcast(broadcastId) {
+    const broadcastData = this.activeBroadcasts.get(broadcastId);
+
+    if (broadcastData) {
+      clearInterval(broadcastData.interval);
+      this.activeBroadcasts.delete(broadcastId);
+      logger.info(`Stopped queue processor for broadcast: ${broadcastId}`);
+    }
+  }
+
+  /**
+   * Main queue processing logic
+   */
+  async _processBroadcastQueue(broadcastId) {
+    try {
+      const broadcast = await Broadcast.findById(broadcastId);
+
+      if (!broadcast) {
+        this.stopBroadcast(broadcastId);
+        return;
+      }
+
+      // Completed or cancelled
+      if (['completed', 'cancelled'].includes(broadcast.status)) {
+        this.stopBroadcast(broadcastId);
+        return;
+      }
+
+      // Transition to in_progress
+      if (broadcast.status === 'queued') {
+        await broadcast.updateStatus('in_progress');
+      }
+
+      // Count active calls
+      const activeCalls = await BroadcastCall.countDocuments({
+        broadcast: broadcastId,
+        status: { $in: ['calling', 'ringing', 'in_progress'] }
+      });
+
+      const maxConcurrent = broadcast.config.maxConcurrent || 50;
+      const availableSlots = maxConcurrent - activeCalls;
+
+      if (availableSlots <= 0) {
+        logger.debug(
+          `Broadcast ${broadcastId}: Max concurrency reached (${activeCalls}/${maxConcurrent})`
+        );
+        return;
+      }
+
+      // Fetch calls ready to be made
+      const callsToMake = await this._getNextCalls(
+        broadcastId,
+        availableSlots
+      );
+
+      if (callsToMake.length === 0) {
+        const pendingCalls = await BroadcastCall.countDocuments({
+          broadcast: broadcastId,
+          status: { $in: ['queued', 'calling', 'ringing', 'in_progress'] }
+        });
+
+        if (pendingCalls === 0) {
+          logger.info(`Broadcast ${broadcastId} completed`);
+          await broadcast.updateStatus('completed');
+          this.stopBroadcast(broadcastId);
+        }
+
+        return;
+      }
+
+      logger.info(
+        `Broadcast ${broadcastId}: Initiating ${callsToMake.length} calls (${activeCalls + callsToMake.length}/${maxConcurrent})`
+      );
+
+      await Promise.allSettled(
+        callsToMake.map(call =>
+          this._initiateCall(call, broadcast)
+        )
+      );
+
+      emitBroadcastUpdate(broadcastId, {
+        status: broadcast.status,
+        stats: broadcast.stats,
+        activeCalls: activeCalls + callsToMake.length
+      });
+    } catch (error) {
+      logger.error(
+        `Error processing broadcast queue ${broadcastId}:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Get next batch of calls
+   */
+  async _getNextCalls(broadcastId, limit) {
+    const freshCalls = await BroadcastCall.find({
+      broadcast: broadcastId,
+      status: 'queued',
+      attempts: 0
+    })
+      .limit(limit)
+      .lean();
+
+    if (freshCalls.length >= limit) {
+      return freshCalls;
+    }
+
+    const retryCalls = await BroadcastCall.getRetryableCalls(broadcastId);
+
+    return [
+      ...freshCalls,
+      ...retryCalls.slice(0, limit - freshCalls.length)
+    ];
+  }
+
+  /**
+   * Initiate single call
+   */
+  async _initiateCall(callDoc, broadcast) {
+    try {
+      const call = await BroadcastCall.findById(callDoc._id);
+
+      if (!call) {
+        logger.error(`Call ${callDoc._id} not found`);
+        return;
+      }
+
+      // DND check
+      if (broadcast.config.compliance.dndRespect) {
+        const dndStatus = await this._checkDND(call.contact.phone);
+
+        if (dndStatus === 'blocked') {
+          call.dndStatus = 'blocked';
+          call.status = 'failed';
+          await call.save();
+          await broadcast.incrementStat('failed');
+          return;
+        }
+      }
+
+      // Opt-out check
+      if (await this._isOptedOut(call.contact.phone)) {
+        await call.markOptedOut();
+        await broadcast.incrementStat('opted_out');
+        return;
+      }
+
+      const twilioResponse =
+        await twilioVoiceService.makeVoiceBroadcastCall({
+          to: call.contact.phone,
+          audioUrl: call.personalizedMessage.audioUrl,
+          disclaimerText:
+            broadcast.config.compliance.disclaimerText,
+          callbackUrl: `${process.env.BASE_URL}/webhook/broadcast/${call._id}/status`
+        });
+
+      await call.markCalling(twilioResponse.sid);
+      await broadcast.incrementStat('calling');
+
+      logger.info(
+        `Call initiated: ${call._id} -> ${call.contact.phone} (${twilioResponse.sid})`
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to initiate call ${callDoc._id}:`,
+        error
+      );
+
+      const call = await BroadcastCall.findById(callDoc._id);
+      if (call) {
+        await call.markFailed(
+          error.code || 500,
+          error.message,
+          true
+        );
+      }
+    }
+  }
+
+  /**
+   * Check DND registry
+   */
+  async _checkDND(phoneNumber) {
+    // TODO: integrate DND provider
+    return 'allowed';
+  }
+
+  /**
+   * Check opt-out list
+   */
+  async _isOptedOut(phoneNumber) {
+    const exists = await OptOut.exists({ phone: phoneNumber });
+    return !!exists;
+  }
+
+  /**
+   * Get active broadcasts count
+   */
+  getActiveBroadcastsCount() {
+    return this.activeBroadcasts.size;
+  }
+}
+
+export default new BroadcastQueueService();

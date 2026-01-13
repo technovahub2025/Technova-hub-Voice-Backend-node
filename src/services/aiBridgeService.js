@@ -1,0 +1,206 @@
+import WebSocket from 'ws';
+import EventEmitter from 'events';
+import axios from 'axios';
+import config from '../config/env.js';
+import logger from '../utils/logger.js';
+
+class AIBridgeService extends EventEmitter {
+  constructor(callId) {
+    super();
+    this.callId = callId;
+    this.ws = null;
+    this.connected = false;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 3;
+    this.messageQueue = [];
+  }
+
+  /* ======================
+     Connect to AI Service
+  ======================= */
+  async connect() {
+    return new Promise((resolve, reject) => {
+      logger.info(`[${this.callId}] Connecting → ${config.AI_SERVICE_URL}`);
+
+      this.ws = new WebSocket(`${config.AI_SERVICE_URL}/ws/${this.callId}`);
+
+      this.ws.on('open', () => {
+        logger.info(`[${this.callId}] ✓ Connected to AI service`);
+        this.connected = true;
+        this.reconnectAttempts = 0;
+        this.processQueue();
+        this.emit('connected');
+        resolve();
+      });
+
+      this.ws.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          this.handleAIMessage(msg);
+        } catch (err) {
+          logger.error(`[${this.callId}] Parse error`, err);
+        }
+      });
+
+      this.ws.on('error', (err) => {
+        logger.error(`[${this.callId}] WebSocket error`, err);
+        this.emit('error', err);
+        reject(err);
+      });
+
+      this.ws.on('close', () => {
+        logger.warn(`[${this.callId}] Disconnected from AI service`);
+        this.connected = false;
+        this.emit('disconnected');
+
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnect();
+        }
+      });
+
+      setTimeout(() => {
+        if (!this.connected) reject(new Error('AI service connection timeout'));
+      }, 10_000);
+    });
+  }
+
+  /* ======================
+     Handle Incoming Messages
+  ======================= */
+  handleAIMessage(msg) {
+    const { type, text, audio, format, error } = msg;
+    logger.debug(`[${this.callId}] AI → ${type}`);
+
+    switch (type) {
+      case 'transcription':
+        this.emit('transcription', { text });
+        break;
+      case 'ai_response':
+        this.emit('ai_response', { text });
+        break;
+      case 'audio_response':
+        this.emit('audio_response', {
+          audio: Buffer.from(audio, 'hex'),
+          format
+        });
+        break;
+      case 'error':
+        this.emit('ai_error', { error });
+        break;
+      case 'heartbeat':
+        break;
+      default:
+        logger.warn(`[${this.callId}] Unknown message type: ${type}`);
+    }
+  }
+
+  /* ======================
+     Send Audio/Text to AI
+  ======================= */
+  sendAudio(audioBuffer) {
+    this.sendMessage({
+      type: 'audio_chunk',
+      audio: audioBuffer.toString('hex'),
+      call_id: this.callId
+    });
+  }
+
+  sendText(text) {
+    this.sendMessage({
+      type: 'text_message',
+      text,
+      call_id: this.callId
+    });
+  }
+
+  /* ======================
+     Generic Send Message
+  ======================= */
+  sendMessage(message) {
+    if (!this.connected) {
+      logger.warn(`[${this.callId}] Not connected – queued`);
+      this.messageQueue.push(message);
+      return;
+    }
+
+    try {
+      this.ws.send(JSON.stringify(message));
+    } catch (err) {
+      logger.error(`[${this.callId}] Send failed`, err);
+      this.messageQueue.push(message);
+    }
+  }
+
+  processQueue() {
+    while (this.messageQueue.length && this.connected) {
+      const msg = this.messageQueue.shift();
+      this.ws.send(JSON.stringify(msg));
+    }
+  }
+
+  /* ======================
+     Conversation Control
+  ======================= */
+  resetConversation() {
+    this.sendMessage({ type: 'reset', call_id: this.callId });
+  }
+
+  endCall() {
+    if (!this.connected) return;
+    this.sendMessage({ type: 'end_call', call_id: this.callId });
+    setTimeout(() => this.disconnect(), 1_000);
+  }
+
+  disconnect() {
+    if (this.ws) {
+      this.connected = false;
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+
+  reconnect() {
+    this.reconnectAttempts++;
+    const delay = Math.min(1_000 * 2 ** this.reconnectAttempts, 5_000);
+    logger.info(
+      `[${this.callId}] Reconnecting in ${delay} ms (attempt ${this.reconnectAttempts})`
+    );
+
+    setTimeout(() => {
+      this.connect().catch((err) =>
+        logger.error(`[${this.callId}] Reconnection failed`, err)
+      );
+    }, delay);
+  }
+
+  /* ======================
+     Health & Test (HTTP)
+  ======================= */
+  static async healthCheck() {
+    try {
+      const res = await axios.get(`${config.AI_SERVICE_HTTP}/health`, {
+        timeout: 5_000
+      });
+      return res.data;
+    } catch (err) {
+      logger.error('AI service health check failed', err.message);
+      return { status: 'unhealthy', error: err.message };
+    }
+  }
+
+  static async testAI(text) {
+    try {
+      const res = await axios.post(
+        `${config.AI_SERVICE_HTTP}/test-ai`,
+        { message: text },
+        { timeout: 10_000 }
+      );
+      return res.data;
+    } catch (err) {
+      logger.error('AI test failed', err.message);
+      throw err;
+    }
+  }
+}
+
+export default AIBridgeService;
