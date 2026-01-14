@@ -29,7 +29,7 @@ export default {
   JWT_EXPIRE: process.env.JWT_EXPIRE || '7d',
 
   // Base URL (for webhooks)
-  /*BASE_URL: process.env.BASE_URL || 'http://localhost:3000',*/
+  BASE_URL: process.env.BASE_URL || 'https://technova-hub-voice-backend-node.onrender.com',
 
   // Telephony Provider (twilio or exotel)
   TELEPHONY_PROVIDER: process.env.TELEPHONY_PROVIDER || 'twilio',
