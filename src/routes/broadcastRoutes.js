@@ -16,7 +16,7 @@ router.get('/list', authenticate, broadcastController.listBroadcasts);
 router.delete('/:id', authenticate, broadcastController.deleteBroadcast);
 
 // 🌐 Twilio webhook routes (secured via Twilio signature)
-router.get('/twiml', verifyTwilioRequest, twilioWebhooks.getBroadcastTwiML.bind(twilioWebhooks));
+router.all('/twiml', verifyTwilioRequest, twilioWebhooks.getBroadcastTwiML.bind(twilioWebhooks));
 router.post('/:callId/status', verifyTwilioRequest, twilioWebhooks.handleCallStatus.bind(twilioWebhooks));
 router.post('/keypress', verifyTwilioRequest, twilioWebhooks.handleKeypress.bind(twilioWebhooks));
 

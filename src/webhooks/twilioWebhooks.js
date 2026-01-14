@@ -41,42 +41,38 @@ class TwilioWebhooks {
     try {
       const { audioUrl, disclaimer } = req.query;
 
+      // 🔥 CRITICAL FIX: Set proper headers for Twilio
+      res.setHeader('Content-Type', 'text/xml');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
       if (!audioUrl) {
         logger.error('Missing audioUrl in TwiML request');
-        return res.type('text/xml').send(`
-          <Response>
-            <Say voice="alice">Invalid broadcast configuration</Say>
-            <Hangup/>
-          </Response>
-        `);
-      }
-
-      // 🔥 CRITICAL FIX: Validate audio before Twilio plays it
-      const audioOk = await isAudioReachable(audioUrl);
-
-      if (!audioOk) {
-        logger.error('Audio not ready for Twilio', { audioUrl });
-
-        return res.type('text/xml').send(`
-          <Response>
-            <Say voice="alice">
-              Sorry, this call is currently unavailable.
-            </Say>
-            <Hangup/>
-          </Response>
-        `);
-      }
-
-      // 🔥 SAFE TwiML ORDER
-      const twiml = `
-<?xml version="1.0" encoding="UTF-8"?>
+        const errorTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  <Say voice="alice">Invalid broadcast configuration</Say>
+  <Hangup/>
+</Response>`;
+        return res.send(errorTwiML);
+      }
 
+      // 🔥 CRITICAL FIX: Non-blocking audio validation
+      try {
+        const audioOk = await isAudioReachable(audioUrl);
+        if (!audioOk) {
+          logger.warn('Audio URL verification failed (might still work for Twilio)', { audioUrl });
+        }
+      } catch (checkErr) {
+        logger.warn('Audio check skipped due to error', { error: checkErr.message });
+      }
+
+      // 🔥 CRITICAL FIX: Proper TwiML with valid structure
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
   <Say voice="alice" language="en-IN">
     ${disclaimer || 'This is an automated call'}
   </Say>
 
-  <!-- Gather FIRST so call does not crash -->
   <Gather numDigits="1"
           timeout="3"
           action="${process.env.BASE_URL}/webhook/broadcast/keypress"
@@ -86,15 +82,13 @@ class TwilioWebhooks {
     </Say>
   </Gather>
 
-  <!-- Play audio AFTER gather -->
   <Play>${audioUrl}</Play>
 
   <Hangup/>
+</Response>`;
 
-</Response>
-`;
-
-      res.type('text/xml').send(twiml);
+      logger.info('TwiML generated successfully', { audioUrl, hasDisclaimer: !!disclaimer });
+      res.send(twiml);
 
     } catch (error) {
       logger.error('TwiML generation failed', {
@@ -102,12 +96,14 @@ class TwilioWebhooks {
         stack: error.stack
       });
 
-      res.type('text/xml').send(`
-        <Response>
-          <Say voice="alice">System error</Say>
-          <Hangup/>
-        </Response>
-      `);
+      // 🔥 CRITICAL FIX: Error response with proper headers
+      res.setHeader('Content-Type', 'text/xml');
+      const errorTwiML = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">System error occurred</Say>
+  <Hangup/>
+</Response>`;
+      res.send(errorTwiML);
     }
   }
 
@@ -128,10 +124,30 @@ class TwilioWebhooks {
         ErrorMessage
       } = req.body;
 
-      const call = await BroadcastCall.findOne({ callSid: CallSid });
+      const { callId } = req.params;
+
+      let call = await BroadcastCall.findOne({ callSid: CallSid });
+
+      // Fallback: Try looking up by database ID (handling race conditions)
+      if (!call && callId) {
+        try {
+          call = await BroadcastCall.findById(callId);
+          if (call) {
+            logger.info('Found call by ID (race condition handled)', { callId, CallSid });
+
+            // Ensure CallSid is saved for future lookups
+            if (!call.callSid) {
+              call.callSid = CallSid;
+              await call.save();
+            }
+          }
+        } catch (err) {
+          logger.warn('Invalid callId in status callback', { callId });
+        }
+      }
 
       if (!call) {
-        logger.warn('Status update for unknown call', { CallSid });
+        logger.warn('Status update for unknown call', { CallSid, callId });
         return res.sendStatus(404);
       }
 

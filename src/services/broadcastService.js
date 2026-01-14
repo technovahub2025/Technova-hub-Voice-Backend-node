@@ -7,7 +7,7 @@ import BroadcastCall from '../models/BroadcastCall.js';
 import ttsBatchService from "../services/ttsBatchService.js";
 import broadcastQueueService from './broadcastQueueService.js';
 import logger from '../utils/logger.js';
-import { emitStatsUpdate, emitBroadcastListUpdate } from '../sockets/unifiedSocket.js';
+import { emitStatsUpdate, emitBroadcastListUpdate, emitCallsCreated } from '../sockets/unifiedSocket.js';
 
 class BroadcastService {
   /**
@@ -192,6 +192,9 @@ class BroadcastService {
     logger.info(
       `Created ${callDocs.length} call documents for broadcast ${broadcast._id}`
     );
+
+    // 🔥 Notify frontend that calls are ready (Fixes empty list race condition)
+    emitCallsCreated(broadcast._id);
   }
 
   /**

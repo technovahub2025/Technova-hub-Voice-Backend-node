@@ -4,7 +4,7 @@ import OptOut from '../models/OptOut.js';
 
 import twilioVoiceService from './twilioVoiceService.js';
 import logger from '../utils/logger.js';
-import { emitBroadcastUpdate } from "../sockets/unifiedSocket.js";
+import { emitBroadcastUpdate, emitCallUpdate } from "../sockets/unifiedSocket.js";
 
 class BroadcastQueueService {
   constructor() {
@@ -164,6 +164,14 @@ class BroadcastQueueService {
         return;
       }
 
+      // 🔥 EMIT: Call queued event
+      emitCallUpdate(broadcast._id.toString(), {
+        callId: call._id,
+        phone: call.contact.phone,
+        status: 'calling',
+        duration: 0
+      });
+
       // DND check
       if (broadcast.config.compliance.dndRespect) {
         const dndStatus = await this._checkDND(call.contact.phone);
@@ -173,6 +181,14 @@ class BroadcastQueueService {
           call.status = 'failed';
           await call.save();
           await broadcast.incrementStat('failed');
+          
+          // 🔥 EMIT: Call failed due to DND
+          emitCallUpdate(broadcast._id.toString(), {
+            callId: call._id,
+            phone: call.contact.phone,
+            status: 'failed',
+            duration: 0
+          });
           return;
         }
       }
@@ -181,6 +197,14 @@ class BroadcastQueueService {
       if (await this._isOptedOut(call.contact.phone)) {
         await call.markOptedOut();
         await broadcast.incrementStat('opted_out');
+        
+        // 🔥 EMIT: Call opted out
+        emitCallUpdate(broadcast._id.toString(), {
+          callId: call._id,
+          phone: call.contact.phone,
+          status: 'opted_out',
+          duration: 0
+        });
         return;
       }
 
@@ -199,6 +223,16 @@ class BroadcastQueueService {
       logger.info(
         `Call initiated: ${call._id} -> ${call.contact.phone} (${twilioResponse.sid})`
       );
+
+      // 🔥 EMIT: Call initiated successfully
+      emitCallUpdate(broadcast._id.toString(), {
+        callId: call._id,
+        callSid: twilioResponse.sid,
+        phone: call.contact.phone,
+        status: 'calling',
+        duration: 0
+      });
+
     } catch (error) {
       logger.error(
         `Failed to initiate call ${callDoc._id}:`,
@@ -212,6 +246,14 @@ class BroadcastQueueService {
           error.message,
           true
         );
+
+        // 🔥 EMIT: Call failed due to error
+        emitCallUpdate(call.broadcast.toString(), {
+          callId: call._id,
+          phone: call.contact.phone,
+          status: 'failed',
+          duration: 0
+        });
       }
     }
   }

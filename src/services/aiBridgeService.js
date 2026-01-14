@@ -11,8 +11,10 @@ class AIBridgeService extends EventEmitter {
     this.ws = null;
     this.connected = false;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 3;
+    this.maxReconnectAttempts = 5;
     this.messageQueue = [];
+    this.heartbeatInterval = null;
+    this.reconnectTimeout = null;
   }
 
   /* ======================
@@ -29,6 +31,7 @@ class AIBridgeService extends EventEmitter {
         this.connected = true;
         this.reconnectAttempts = 0;
         this.processQueue();
+        this.startHeartbeat();
         this.emit('connected');
         resolve();
       });
@@ -48,13 +51,17 @@ class AIBridgeService extends EventEmitter {
         reject(err);
       });
 
-      this.ws.on('close', () => {
-        logger.warn(`[${this.callId}] Disconnected from AI service`);
+      this.ws.on('close', (code, reason) => {
+        logger.warn(`[${this.callId}] Disconnected from AI service (code: ${code}, reason: ${reason || 'unknown'})`);
         this.connected = false;
+        this.stopHeartbeat();
         this.emit('disconnected');
 
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnect();
+        } else {
+          logger.error(`[${this.callId}] Max reconnection attempts reached`);
+          this.emit('error', new Error('Max reconnection attempts reached'));
         }
       });
 
@@ -152,24 +159,52 @@ class AIBridgeService extends EventEmitter {
   }
 
   disconnect() {
+    this.stopHeartbeat();
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
     if (this.ws) {
       this.connected = false;
-      this.ws.close();
+      this.ws.close(1000, 'Client disconnect');
       this.ws = null;
     }
   }
 
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatInterval = setInterval(() => {
+      if (this.connected && this.ws) {
+        this.sendMessage({ type: 'heartbeat', call_id: this.callId });
+      }
+    }, 30000); // 30 seconds
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
   reconnect() {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+    }
+    
     this.reconnectAttempts++;
-    const delay = Math.min(1_000 * 2 ** this.reconnectAttempts, 5_000);
+    const delay = Math.min(1_000 * 2 ** this.reconnectAttempts, 10_000);
     logger.info(
-      `[${this.callId}] Reconnecting in ${delay} ms (attempt ${this.reconnectAttempts})`
+      `[${this.callId}] Reconnecting in ${delay} ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
     );
 
-    setTimeout(() => {
-      this.connect().catch((err) =>
-        logger.error(`[${this.callId}] Reconnection failed`, err)
-      );
+    this.reconnectTimeout = setTimeout(() => {
+      this.connect().catch((err) => {
+        logger.error(`[${this.callId}] Reconnection failed`, err);
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnect();
+        }
+      });
     }, delay);
   }
 
