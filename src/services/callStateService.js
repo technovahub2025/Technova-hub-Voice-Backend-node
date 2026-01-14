@@ -1,6 +1,6 @@
 import logger from '../utils/logger.js';
 import Call from '../models/call.js';
-import User from '../models/User.js';
+import User from '../models/user.js';
 
 class CallStateService {
   constructor() {
