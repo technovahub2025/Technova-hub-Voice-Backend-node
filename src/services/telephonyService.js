@@ -1,13 +1,12 @@
 import twilio from 'twilio';
 import axios from 'axios';  
-import config from '../config/env.js';
 import logger from '../utils/logger.js';
 
 class TelephonyService {
   constructor() {
     this.client = twilio(
-      config.TWILIO_ACCOUNT_SID,
-      config.TWILIO_AUTH_TOKEN
+      process.env.TWILIO_ACCOUNT_SID,
+      process.env.TWILIO_AUTH_TOKEN
     );
 
     logger.info('✓ Twilio Telephony Service Initialized');
@@ -46,9 +45,9 @@ class TelephonyService {
     try {
       const call = await this.client.calls.create({
         to,
-        from: from || config.TWILIO_PHONE_NUMBER,
+        from: from || process.env.TWILIO_PHONE_NUMBER,
         url: webhookUrl,
-        statusCallback: `${config.BASE_URL}/webhook/call/status`,
+        statusCallback: `${process.env.BASE_URL}/webhook/call/status`,
         statusCallbackEvent: [
           'initiated',
           'ringing',
@@ -133,7 +132,7 @@ class TelephonyService {
   getProviderInfo() {
     return {
       provider: 'twilio',
-      phoneNumber: config.TWILIO_PHONE_NUMBER
+      phoneNumber: process.env.TWILIO_PHONE_NUMBER
     };
   }
 }

@@ -4,7 +4,6 @@ import app from "./src/app.js";
 import { initializeSocketIO, shutdownSocketIO } from "./src/sockets/unifiedSocket.js";
 
 import { connectDB } from "./src/config/db.js";
-import config from "./src/config/env.js";
 import logger from "./src/utils/logger.js";
 
 // Connect to MongoDB
@@ -57,12 +56,12 @@ process.on('SIGINT', shutdown);   // CTRL+C
 process.on('SIGTERM', shutdown);  // Docker / PM2
 
 // Start server with port error handling
-server.listen(config.PORT, () => {
-  logger.info(`🚀 Server running on port ${config.PORT}`);
+server.listen(process.env.PORT || 3000, () => {
+  logger.info(`🚀 Server running on port ${process.env.PORT || 3000}`);
   logger.info(`📡 Socket.IO ready for connections`);
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    logger.error(`❌ Port ${config.PORT} already in use`);
+    logger.error(`❌ Port ${process.env.PORT || 3000} already in use`);
     process.exit(1); // Exit so nodemon can restart
   } else {
     throw err;

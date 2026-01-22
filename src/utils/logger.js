@@ -2,7 +2,6 @@ import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
-import config from '../config/env.js';
 import { fileURLToPath } from 'url';
 
 /* ======================
@@ -34,7 +33,7 @@ const safeStringify = (obj, indent = 2) => {
 /* ======================
    Logs Directory
 ====================== */
-const logDir = config.LOG_DIR || path.join(__dirname, '../../logs');
+const logDir = process.env.LOG_DIR || path.join(__dirname, '../../logs');
 
 if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
@@ -72,7 +71,7 @@ const transports = [
   // Console logs
   new winston.transports.Console({
     format:
-      config.NODE_ENV === 'development' ? consoleFormat : logFormat
+      process.env.NODE_ENV === 'development' ? consoleFormat : logFormat
   }),
 
   // All logs (rotating)
@@ -99,7 +98,7 @@ const transports = [
    Create Logger
 ====================== */
 const logger = winston.createLogger({
-  level: config.LOG_LEVEL || 'info',
+  level: process.env.LOG_LEVEL || 'info',
   transports,
   exitOnError: false
 });

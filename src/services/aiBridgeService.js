@@ -1,7 +1,6 @@
 import WebSocket from 'ws';
 import EventEmitter from 'events';
 import axios from 'axios';
-import config from '../config/env.js';
 import logger from '../utils/logger.js';
 
 class AIBridgeService extends EventEmitter {
@@ -22,9 +21,9 @@ class AIBridgeService extends EventEmitter {
   ======================= */
   async connect() {
     return new Promise((resolve, reject) => {
-      logger.info(`[${this.callId}] Connecting → ${config.AI_SERVICE_URL}`);
+      logger.info(`[${this.callId}] Connecting → ${process.env.AI_SERVICE_URL || 'ws://localhost:4000'}`);
 
-      this.ws = new WebSocket(`${config.AI_SERVICE_URL}/ws/${this.callId}`);
+      this.ws = new WebSocket(`${process.env.AI_SERVICE_URL || 'ws://localhost:4000'}/ws/${this.callId}`);
 
       this.ws.on('open', () => {
         logger.info(`[${this.callId}] ✓ Connected to AI service`);
@@ -213,7 +212,7 @@ class AIBridgeService extends EventEmitter {
   ======================= */
   static async healthCheck() {
     try {
-      const res = await axios.get(`${config.AI_SERVICE_HTTP}/health`, {
+      const res = await axios.get(`${process.env.AI_SERVICE_HTTP || 'http://localhost:4000'}/health`, {
         timeout: 5_000
       });
       return res.data;
@@ -226,7 +225,7 @@ class AIBridgeService extends EventEmitter {
   static async testAI(text) {
     try {
       const res = await axios.post(
-        `${config.AI_SERVICE_HTTP}/test-ai`,
+        `${process.env.AI_SERVICE_HTTP || 'http://localhost:4000'}/test-ai`,
         { message: text },
         { timeout: 10_000 }
       );

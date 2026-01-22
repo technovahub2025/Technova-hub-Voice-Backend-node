@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import config from './env.js';
 import logger from '../utils/logger.js';
 
 export const connectDB = async () => {
@@ -9,7 +8,7 @@ export const connectDB = async () => {
       socketTimeoutMS: 45000,
     };
 
-    await mongoose.connect(config.MONGODB_URI, options);
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/voice_automation', options);
 
     logger.info('✓ MongoDB connected successfully');
     logger.info(`  Database: ${mongoose.connection.name}`);
