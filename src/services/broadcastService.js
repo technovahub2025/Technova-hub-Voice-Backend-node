@@ -115,10 +115,10 @@ class BroadcastService {
   async generateSingleAudio(message, voice) {
     try {
       // Call Python TTS service
-      // const ttsResponse = await axios.post(
-      //   'https://technova-hub-voice-backend-python.onrender.com/tts/broadcast',
-         const ttsResponse = await axios.post(
-        'http://localhost:4000/tts/broadcast',
+      const ttsResponse = await axios.post(
+        'https://technova-hub-voice-backend-python-jzxq.onrender.com/tts/broadcast',
+        //  const ttsResponse = await axios.post(
+        // 'http://localhost:4000/tts/broadcast',
         {
           text: message.text,
           voice: voice.voiceId,
