@@ -22,12 +22,19 @@ const broadcastSchema = new mongoose.Schema(
       },
       voiceId: {
         type: String,
-        required: true
-        // e.g., "en-IN-NeerjaNeural"
+        required: true,
+        enum: [
+          'ta-IN-PallaviNeural',      // Tamil – Female
+          'ta-IN-ValluvarNeural',      // Tamil – Male
+          'en-GB-SoniaNeural',        // British English – Female
+          'en-GB-RyanNeural'          // British English – Male
+        ]
+        // Limited to 4 specified voices
       },
       language: {
         type: String,
-        default: 'en-IN'
+        enum: ['ta-IN', 'en-GB'], // Tamil or British English
+        default: 'ta-IN'
       }
     },
 

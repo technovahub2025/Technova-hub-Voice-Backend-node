@@ -21,8 +21,8 @@ class BroadcastService {
         messageTemplate: data.messageTemplate,
         voice: {
           provider: data.voice?.provider || 'edge',
-          voiceId: data.voice?.voiceId || 'en-IN-NeerjaNeural',
-          language: data.voice?.language || 'en-IN'
+          voiceId: data.voice?.voiceId || 'ta-IN-PallaviNeural', // Default: Tamil – Female
+          language: data.voice?.language || 'ta-IN' // Default: Tamil
         },
         contacts: data.contacts,
         config: {
