@@ -6,16 +6,30 @@ import logger from '../utils/logger.js';
 const router = express.Router();
 
 /**
- * � AI Service Health Check
+ * 🏥 AI Service Health Check
  */
 router.get('/health', async (req, res) => {
     try {
         const health = await AIBridgeService.checkHealth();
-        const statusCode = health.status === 'ok' ? 200 : 503;
+        
+        // Check for required services
+        const nodejs_backend = true; // Backend is running if this code executes
+        const inbound_service = health.status === 'ok'; // AI service availability
+        
+        let status = 'healthy';
+        if (!nodejs_backend || !inbound_service) {
+            status = 'degraded';
+        }
+        
+        const statusCode = status === 'healthy' ? 200 : 503;
         res.status(statusCode).json({
             service: 'AI Service',
-            status: health.status,
+            status: status,
             timestamp: new Date().toISOString(),
+            checks: {
+                nodejs_backend: nodejs_backend ? 'healthy' : 'unhealthy',
+                inbound_service: inbound_service ? 'healthy' : 'unhealthy'
+            },
             ...(health.data && { data: health.data }),
             ...(health.error && { error: health.error })
         });
@@ -23,15 +37,20 @@ router.get('/health', async (req, res) => {
         logger.error('AI health check failed:', error);
         res.status(503).json({
             service: 'AI Service',
-            status: 'unhealthy',
+            status: 'degraded',
             timestamp: new Date().toISOString(),
+            checks: {
+                nodejs_backend: 'healthy', // Backend is running
+                inbound_service: 'unhealthy' // AI service failed
+            },
             error: error.message
         });
     }
 });
 
 /**
- * �🌐 Test AI service
+ * � Test AI service
+ * ��🌐 Test AI service
  */
 router.post('/test', async (req, res) => {
     try {
